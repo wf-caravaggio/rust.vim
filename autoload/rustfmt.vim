@@ -60,19 +60,47 @@ function! s:RustfmtWriteMode()
     endif
 endfunction
 
-function! s:RustfmtConfigOptions()
-    let l:rustfmt_toml = findfile('rustfmt.toml', expand('%:p:h') . ';')
+function! s:RustfmtCargoEdition() abort
+    let l:manifest = findfile('Cargo.toml', escape(expand('%:p:h'), ' ,') . ';')
+    if l:manifest ==# ''
+        return ''
+    endif
+
+    " Let Cargo resolve defaults and edition.workspace inheritance.
+    let l:stderr_file = tempname()
+    let l:output = system('cd ' . shellescape(fnamemodify(l:manifest, ':p:h'))
+                \ . ' && cargo read-manifest --manifest-path '
+                \ . shellescape(fnamemodify(l:manifest, ':p'))
+                \ . ' 2> ' . shellescape(l:stderr_file))
+    let l:status = v:shell_error
+    let l:stderr = join(readfile(l:stderr_file), "\n")
+    call delete(l:stderr_file)
+    if l:status != 0
+        throw 'rust.vim: cannot determine Cargo edition: ' . l:stderr
+    endif
+    return json_decode(l:output).edition
+endfunction
+
+function! s:RustfmtConfigOptions() abort
+    let l:options = ''
+    let l:search_path = escape(expand('%:p:h'), ' ,') . ';'
+    let l:rustfmt_toml = findfile('rustfmt.toml', l:search_path)
     if l:rustfmt_toml !=# ''
-        return '--config-path '.shellescape(fnamemodify(l:rustfmt_toml, ":p"))
+        let l:options = '--config-path '.shellescape(fnamemodify(l:rustfmt_toml, ":p"))
+    else
+        let l:_rustfmt_toml = findfile('.rustfmt.toml', l:search_path)
+        if l:_rustfmt_toml !=# ''
+            let l:options = '--config-path '.shellescape(fnamemodify(l:_rustfmt_toml, ":p"))
+        endif
     endif
 
-    let l:_rustfmt_toml = findfile('.rustfmt.toml', expand('%:p:h') . ';')
-    if l:_rustfmt_toml !=# ''
-        return '--config-path '.shellescape(fnamemodify(l:_rustfmt_toml, ":p"))
+    let l:edition = s:RustfmtCargoEdition()
+    if l:edition !=# ''
+        return l:options . ' --edition ' . shellescape(l:edition)
     endif
 
-    " Default to edition 2018 in case no rustfmt.toml was found.
-    return '--edition 2018'
+    " Preserve the existing fallback for standalone files outside Cargo.
+    return l:options ==# '' ? '--edition 2018' : l:options
 endfunction
 
 function! s:RustfmtCommandRange(filename, line1, line2)
